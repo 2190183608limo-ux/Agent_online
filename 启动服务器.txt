@@ -1,0 +1,2 @@
+$env:DISABLE_AUTH="true"; $env:DISABLE_RATE_LIMIT="true"; node server.js //终端启动服务器
+
