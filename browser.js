@@ -1,0 +1,803 @@
+// browser.js - More stable multi-platform browser automation
+// Note: this file improves local automation reliability. It does not try to bypass CAPTCHA or access controls.
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const path = require('path');
+const fs = require('fs');
+const hooks = require('./hooks');
+const logger = require('./logger');
+
+puppeteer.use(StealthPlugin());
+
+const USER_DATA_DIR = path.join(__dirname, 'browser-data');
+const PLATFORMS_CONFIG = path.join(__dirname, 'platforms.json');
+const DEFAULT_CHROME_PATHS = [
+  process.env.CHROME_PATH,
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files/Chromium/Application/chrome.exe'
+].filter(Boolean);
+const DEFAULT_MAX_WAIT = Number(process.env.BROWSER_RESPONSE_TIMEOUT_MS || 600000);
+const POLL_INTERVAL_MS = Number(process.env.BROWSER_POLL_INTERVAL_MS || 1200);
+const STABLE_POLLS = Number(process.env.BROWSER_STABLE_POLLS || 5);
+
+class BrowserAutomation {
+  constructor() {
+    this.browsers = {};
+    this.pages = {};
+    this.platforms = this.loadPlatforms();
+    this.conversationIds = {};
+    this.loginConfirmations = {};
+    this.queues = new Map();
+  }
+
+  loadPlatforms() {
+    try {
+      const data = fs.readFileSync(PLATFORMS_CONFIG, 'utf8');
+      return JSON.parse(data).platforms || {};
+    } catch (e) {
+      logger.error('failed to load platform config', { error: e.message });
+      return {};
+    }
+  }
+
+  savePlatforms() {
+    try {
+      fs.writeFileSync(PLATFORMS_CONFIG, JSON.stringify({ platforms: this.platforms }, null, 2), 'utf8');
+      return true;
+    } catch (e) {
+      logger.error('failed to save platform config', { error: e.message });
+      return false;
+    }
+  }
+
+  addPlatform(id, config) {
+    this.platforms[id] = {
+      name: config.name,
+      url: config.url,
+      inputSelector: config.inputSelector || 'textarea, [contenteditable="true"]',
+      responseSelector: config.responseSelector || '[data-message-author-role="assistant"], [class*="assistant"], [class*="message"]',
+      loadingSelector: config.loadingSelector || null,
+      stopSelector: config.stopSelector || null,
+      submitSelector: config.submitSelector || null,
+      modeSelector: config.modeSelector || null,
+      newConversationSelector: config.newConversationSelector || null,
+      captchaIndicators: this._normalizeSelectorList(config.captchaIndicators || [])
+    };
+    return this.savePlatforms();
+  }
+
+  removePlatform(id) {
+    if (!this.platforms[id]) return false;
+    delete this.platforms[id];
+    delete this.pages[id];
+    delete this.browsers[id];
+    delete this.conversationIds[id];
+    delete this.loginConfirmations[id];
+    this.queues.delete(id);
+    return this.savePlatforms();
+  }
+
+  async launch() {
+    logger.info('browser manager ready');
+  }
+
+  _emit(event, data = {}) {
+    if (typeof hooks.emitDetached === 'function') hooks.emitDetached(event, data);
+    else hooks.emit(event, data).catch(() => {});
+  }
+
+  _splitSelectors(selectorText) {
+    if (Array.isArray(selectorText)) return selectorText.map(s => String(s).trim()).filter(Boolean);
+    return String(selectorText || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  _normalizeSelectorList(value) {
+    return this._splitSelectors(value);
+  }
+
+  _resolveChromePath() {
+    return DEFAULT_CHROME_PATHS.find(chromePath => fs.existsSync(chromePath)) || null;
+  }
+
+  _isRecoverableBrowserError(error) {
+    const message = String(error?.message || error || '').toLowerCase();
+    return message.includes('page was closed') ||
+      message.includes('page closed') ||
+      message.includes('target closed') ||
+      message.includes('session closed') ||
+      message.includes('browser session closed') ||
+      message.includes('protocol error') ||
+      message.includes('execution context was destroyed') ||
+      message.includes('cannot find context') ||
+      message.includes('detached frame') ||
+      message.includes('page has been closed') ||
+      message.includes('browser was closed') ||
+      message.includes('browser was disconnected') ||
+      message.includes('has no open page');
+  }
+
+  _forgetPlatformSession(platformId, reason = null) {
+    const page = this.pages[platformId];
+    const browser = this.browsers[platformId];
+    if (page && !page.isClosed()) page.close().catch(() => {});
+    if (browser && (typeof browser.isConnected !== 'function' || browser.isConnected())) browser.close().catch(() => {});
+    delete this.pages[platformId];
+    delete this.browsers[platformId];
+    delete this.conversationIds[platformId];
+    delete this.loginConfirmations[platformId];
+    this._emit(hooks.BROWSER_EVENTS.CLOSED, { platformId, reason });
+  }
+
+  _wrapRecoverableError(platformId, error, action) {
+    if (!this._isRecoverableBrowserError(error)) return error;
+    this._forgetPlatformSession(platformId, error.message);
+    const wrapped = new Error(`${platformId} browser session closed while ${action}. Reopen the platform, confirm login, and retry.`);
+    wrapped.cause = error;
+    wrapped.recoverable = true;
+    wrapped.code = 'BROWSER_SESSION_CLOSED';
+    return wrapped;
+  }
+
+  hasPlatform(platformId) {
+    return !!this.platforms[platformId];
+  }
+
+  getPlatformStatus(platformId) {
+    const platform = this.platforms[platformId];
+    if (!platform) return null;
+
+    const browser = this.browsers[platformId];
+    const page = this.pages[platformId];
+    const pageOpen = !!page && !page.isClosed();
+    const browserConnected = !!browser && (typeof browser.isConnected !== 'function' || browser.isConnected());
+
+    return {
+      id: platformId,
+      name: platform.name,
+      configured: true,
+      browserConnected,
+      pageOpen,
+      currentUrl: pageOpen ? page.url() : null,
+      loggedIn: this.isLoggedIn(platformId),
+      busy: this.queues.has(platformId),
+      conversationId: this.conversationIds[platformId] || null
+    };
+  }
+
+  getAllPlatformStatus() {
+    return Object.fromEntries(
+      Object.keys(this.platforms).map(platformId => [platformId, this.getPlatformStatus(platformId)])
+    );
+  }
+
+  async _enqueue(platformId, task) {
+    const previous = this.queues.get(platformId) || Promise.resolve();
+    const run = previous.catch(() => {}).then(task);
+
+    this.queues.set(platformId, run);
+    run.finally(() => {
+      if (this.queues.get(platformId) === run) this.queues.delete(platformId);
+    }).catch(() => {});
+
+    return run;
+  }
+
+  async _createBrowser(platformId) {
+    const profileDir = path.join(USER_DATA_DIR, `profile_${platformId}`);
+    if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
+
+    this._emit(hooks.BROWSER_EVENTS.LAUNCHING, { platformId });
+    logger.info(`[${platformId}] creating browser process`);
+
+    const launchOptions = {
+      headless: false,
+      userDataDir: profileDir,
+      defaultViewport: null,
+      protocolTimeout: 600000,
+      dumpio: false,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--start-maximized',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-ipc-flooding-protection',
+        '--disable-gpu',
+        '--no-first-run',
+        '--disable-extensions',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-default-apps',
+        '--window-size=1280,900',
+        `--window-position=${Object.keys(this.browsers).length * 400},0`
+      ],
+      ignoreDefaultArgs: ['--enable-automation']
+    };
+
+    const executablePath = this._resolveChromePath();
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    } else {
+      logger.warn(`[${platformId}] Chrome executable not found; falling back to Puppeteer default browser`);
+    }
+
+    const browser = await puppeteer.launch(launchOptions);
+
+    // 监控浏览器进程崩溃日志
+    if (browser.process()) {
+      browser.process().stderr?.on('data', (data) => {
+        const msg = String(data || '').trim();
+        if (msg && !msg.includes('DevTools listening')) {
+          logger.warn(`[${platformId}] browser stderr: ${msg.slice(0, 200)}`);
+        }
+      });
+    }
+
+    browser.on('disconnected', () => {
+      const proc = browser.process();
+      const exitCode = proc ? proc.exitCode : 'unknown';
+      logger.warn(`[${platformId}] browser disconnected (exitCode=${exitCode})`);
+      this._forgetPlatformSession(platformId, `browser disconnected (exitCode=${exitCode})`);
+    });
+
+    this.browsers[platformId] = browser;
+    this._emit(hooks.BROWSER_EVENTS.LAUNCHED, { platformId });
+    return browser;
+  }
+
+  async _applyStealthSettings(page) {
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    await page.setViewport({ width: 1280, height: 900 });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      window.chrome = window.chrome || { runtime: {} };
+    });
+  }
+
+  async _isPageHealthy(platformId, page) {
+    if (!page || page.isClosed()) return false;
+    try {
+      await page.evaluate(() => document.readyState);
+      return true;
+    } catch (error) {
+      logger.warn(`[${platformId}] page health check failed`, { error: error.message });
+      if (this._isRecoverableBrowserError(error)) this._forgetPlatformSession(platformId, error.message);
+      return false;
+    }
+  }
+
+  async navigateTo(platformId) {
+    const platform = this.platforms[platformId];
+    if (!platform) throw new Error(`unknown platform: ${platformId}`);
+
+    const existingPage = this.pages[platformId];
+    if (await this._isPageHealthy(platformId, existingPage)) return existingPage;
+
+    let browser = this.browsers[platformId];
+    if (!browser || (typeof browser.isConnected === 'function' && !browser.isConnected())) {
+      browser = await this._createBrowser(platformId);
+    }
+
+    const page = await browser.newPage();
+    await this._applyStealthSettings(page);
+
+    page.on('close', () => {
+      if (this.pages[platformId] === page) {
+        logger.warn(`[${platformId}] page closed`);
+        delete this.pages[platformId];
+        delete this.conversationIds[platformId];
+        delete this.loginConfirmations[platformId];
+        this._emit(hooks.BROWSER_EVENTS.CLOSED, { platformId, reason: 'page closed' });
+      }
+    });
+    page.on('pageerror', error => {
+      logger.warn(`[${platformId}] page error`, { error: error.message });
+      this._emit(hooks.BROWSER_EVENTS.PAGE_ERROR, { platformId, error: error.message });
+    });
+    page.on('dialog', async dialog => {
+      this._emit(hooks.BROWSER_EVENTS.DIALOG, { platformId, message: dialog.message() });
+      try { await dialog.dismiss(); } catch (_) {}
+    });
+
+    logger.info(`[${platformId}] navigating`, { url: platform.url });
+    this._emit(hooks.BROWSER_EVENTS.NAVIGATING, { platformId, url: platform.url });
+    await page.goto(platform.url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+    this.pages[platformId] = page;
+    this._emit(hooks.BROWSER_EVENTS.NAVIGATED, { platformId, url: page.url() });
+
+    await this._smartWait(300);
+    return page;
+  }
+
+  async _waitForNetworkQuiet(page, quietMs = 1500, timeoutMs = 10000) {
+    try {
+      await page.waitForNetworkIdle({ idleTime: quietMs, timeout: timeoutMs });
+    } catch (_) {
+      // Some AI web apps keep long-polling connections open. DOM readiness is enough here.
+    }
+  }
+
+  async _smartWait(ms) {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  confirmLogin(platformId) {
+    this.loginConfirmations[platformId] = true;
+    logger.info(`[${platformId}] login confirmed`);
+    this._emit(hooks.BROWSER_EVENTS.LOGIN_SUCCESS, { platformId });
+  }
+
+  isLoggedIn(platformId) {
+    return !!this.loginConfirmations[platformId];
+  }
+
+  async waitForLoginConfirmation(platformId, timeout = 300000) {
+    if (this.loginConfirmations[platformId]) return true;
+
+    const platform = this.platforms[platformId];
+    this._emit(hooks.BROWSER_EVENTS.LOGIN_REQUIRED, { platformId, name: platform?.name });
+    logger.warn(`[${platformId}] login required. Call /api/confirm-login/${platformId} after manual login.`);
+
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      await this._smartWait(500);
+      if (this.loginConfirmations[platformId]) return true;
+      if (!await this._isPageHealthy(platformId, this.pages[platformId])) {
+        throw new Error(`${platformId} browser was closed before login confirmation`);
+      }
+    }
+    throw new Error(`${platformId} login confirmation timed out`);
+  }
+
+  async _findVisibleElement(page, selectorText) {
+    const selectors = this._splitSelectors(selectorText);
+    for (const selector of selectors) {
+      try {
+        const handles = await page.$$(selector);
+        for (const handle of handles) {
+          const visible = await handle.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+            return !disabled && rect.width > 0 && rect.height > 0 &&
+              style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          });
+          if (visible) return { handle, selector };
+        }
+      } catch (_) {}
+    }
+    return { handle: null, selector: null };
+  }
+
+  async _fillInput(page, input, question) {
+    await input.click();
+    await this._smartWait(300);
+    const filledViaJs = await input.evaluate((el, text) => {
+      try {
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'textarea' || tag === 'input') {
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            tag === 'textarea' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) nativeSetter.call(el, text); else el.value = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return (el.value || '').includes(text.slice(0, 10));
+        }
+        el.focus(); el.textContent = text;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return (el.textContent || '').includes(text.slice(0, 10));
+      } catch (_) { return false; }
+    }, question);
+    if (filledViaJs) { logger.info('input filled via JS'); await this._smartWait(400); return true; }
+    logger.info('JS fill failed, using keyboard.type');
+    await input.click(); await this._smartWait(100);
+    await page.keyboard.down('Control'); await page.keyboard.press('a'); await page.keyboard.up('Control');
+    await this._smartWait(50); await page.keyboard.press('Backspace'); await this._smartWait(150);
+    await page.keyboard.type(question, { delay: 10 }); await this._smartWait(400);
+    const hasContent = await input.evaluate((el, t) => {
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'textarea' || tag === 'input') return (el.value || '').includes(t.slice(0, 10));
+      return (el.innerText || el.textContent || '').includes(t.slice(0, 10));
+    }, question);
+    if (!hasContent) {
+      await input.click(); await this._smartWait(50);
+      await page.evaluate((text) => { document.execCommand('insertText', false, text); }, question);
+      await this._smartWait(400);
+    }
+    return true;
+  }
+
+  async _clickSubmitIfAvailable(platformId, page) {
+    const platform = this.platforms[platformId];
+    if (platform.submitSelector) {
+      const { handle } = await this._findVisibleElement(page, platform.submitSelector);
+      if (handle) {
+        await handle.click();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async sendQuestion(platformId, question, mode = null) {
+    const platform = this.platforms[platformId];
+    if (!platform) throw new Error(`unknown platform: ${platformId}`);
+
+    const page = this.pages[platformId];
+    if (!page || page.isClosed()) throw new Error(`${platformId} has no open page`);
+
+    try {
+      await this._checkBlockingChallenge(platformId);
+
+      const { handle: input, selector } = await this._findVisibleElement(page, platform.inputSelector);
+      if (!input) throw new Error(`${platformId} input box not found`);
+
+      logger.info(`[${platformId}] input found`, { selector });
+      await this._fillInput(page, input, String(question));
+      await this._smartWait(600);
+
+      // 等一下再提交，让前端框架有时间处理输入事件
+      await this._smartWait(500);
+
+      const clicked = await this._clickSubmitIfAvailable(platformId, page);
+      if (!clicked) {
+        await page.keyboard.press('Enter');
+      }
+
+      await this._smartWait(500);
+
+      // 验证：检查输入框是否被清空（大多数 AI 聊天界面发送后会清空输入框）
+      const inputStillHasContent = await this._findVisibleElement(page, platform.inputSelector)
+        .then(({ handle }) => handle ? handle.evaluate(el => {
+          const tag = el.tagName.toLowerCase();
+          if (tag === 'textarea' || tag === 'input') return (el.value || '').trim().length > 0;
+          return (el.innerText || '').trim().length > 0;
+        }) : false)
+        .catch(() => false);
+
+      if (inputStillHasContent) {
+        logger.warn(`[${platformId}] input still has content after submit, trying Enter again`);
+        await page.keyboard.press('Enter');
+        await this._smartWait(1000);
+      }
+
+      this._emit(hooks.BROWSER_EVENTS.QUESTION_SENT, {
+        platformId,
+        question: String(question).slice(0, 200),
+        mode
+      });
+    } catch (error) {
+      throw this._wrapRecoverableError(platformId, error, 'sending a question');
+    }
+  }
+
+  async _checkBlockingChallenge(platformId) {
+    const platform = this.platforms[platformId];
+    const page = this.pages[platformId];
+    if (!page || page.isClosed()) throw new Error(`${platformId} has no open page`);
+
+    const indicators = platform.captchaIndicators || [];
+    for (const selector of indicators) {
+      try {
+        const found = await page.$(selector);
+        if (found) {
+          this._emit(hooks.BROWSER_EVENTS.CAPTCHA_DETECTED, { platformId, selector });
+          throw new Error(`${platformId} requires manual verification`);
+        }
+      } catch (error) {
+        if (error.message.includes('manual verification')) throw error;
+        if (this._isRecoverableBrowserError(error)) throw error;
+      }
+    }
+  }
+
+  async _getResponseSnapshot(platformId) {
+    const platform = this.platforms[platformId];
+    const page = this.pages[platformId];
+    if (!page || page.isClosed()) throw new Error(`${platformId} has no open page`);
+
+    const selectors = this._splitSelectors(platform.responseSelector);
+
+    return page.evaluate((selectors) => {
+      const cleanText = text => String(text || '').replace(/\u00a0/g, ' ').replace(/[\t\r ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+      const isVisible = el => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+      };
+      const hasImages = el => {
+        for (const img of el.querySelectorAll('img')) { if (img.src && img.naturalWidth > 0) return true; }
+        if (el.querySelector('svg') || el.querySelector('canvas')) return true;
+        if (el.querySelectorAll('[style*="background-image"]').length > 0) return true;
+        return false;
+      };
+      const seen = new Set();
+      const items = [];
+      for (const selector of selectors) {
+        let elements = [];
+        try { elements = Array.from(document.querySelectorAll(selector)); } catch (_) { continue; }
+        for (const el of elements) {
+          if (!isVisible(el)) continue;
+          const text = cleanText(el.innerText || el.textContent || '');
+          const imgCount = el.querySelectorAll('img').length;
+          const hasVisual = hasImages(el);
+          if ((!text || text.length < 2) && !hasVisual) continue;
+          const key = selector + ':' + (text || '') + ':img' + imgCount;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const imgUrls = [];
+          for (const img of el.querySelectorAll('img')) {
+            if (img.src) imgUrls.push(img.src);
+          }
+          // 也抓取 canvas 的 dataURL（如果不太大的话）
+          for (const cvs of el.querySelectorAll('canvas')) {
+            try { imgUrls.push(cvs.toDataURL('image/png')); } catch (_) {}
+          }
+          const displayText = text && text.length >= 2 ? text : '[图片内容' + (imgCount > 0 ? ' x' + imgCount : '') + ']';
+          items.push({ selector, text: displayText, length: displayText.length, hasImages: hasVisual, imgCount, images: imgUrls });
+        }
+      }
+      return items;
+    }, selectors);
+  }
+
+  _selectNewResponse(snapshot, baseline) {
+    const baseTexts = new Set((baseline || []).map(x => x.text));
+    let bestText = '';
+    let bestImages = [];
+    for (let i = 0; i < snapshot.length; i += 1) {
+      const item = snapshot[i];
+      const text = item.text;
+      if (!text || baseTexts.has(text)) continue;
+      const minLen = text.startsWith('[图片内容') ? 4 : 10;
+      if (text.length > minLen && text.length > bestText.length) {
+        bestText = text;
+        bestImages = item.images || [];
+      }
+    }
+    return { text: bestText, images: bestImages };
+  }
+
+  async _isLoading(platformId) {
+    const platform = this.platforms[platformId];
+    const page = this.pages[platformId];
+    if (!page || page.isClosed()) throw new Error(`${platformId} has no open page`);
+
+    const selectors = this._splitSelectors(platform.loadingSelector || '');
+    if (selectors.length === 0) return false;
+
+    for (const selector of selectors) {
+      try {
+        const handles = await page.$$(selector);
+        for (const handle of handles) {
+          const visible = await handle.evaluate(el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 &&
+              style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          });
+          if (visible) return true;
+        }
+      } catch (error) {
+        if (this._isRecoverableBrowserError(error)) throw error;
+      }
+    }
+    return false;
+  }
+
+  async waitForResponse(platformId, maxWait = DEFAULT_MAX_WAIT, baseline = []) {
+    const platform = this.platforms[platformId];
+    if (!platform) throw new Error(`unknown platform: ${platformId}`);
+
+    const page = this.pages[platformId];
+    if (!page || page.isClosed()) throw new Error(`${platformId} has no open page`);
+
+    logger.info(`[${platformId}] waiting for response`);
+    const start = Date.now();
+    let lastContent = '';
+    let lastHash = '';
+    let lastLoadingAt = 0;
+    let lastImages = [];
+    let stableCount = 0;
+
+    while (Date.now() - start < maxWait) {
+      await this._smartWait(POLL_INTERVAL_MS);
+
+      // 检查页面是否仍然存活
+      if (!page || page.isClosed()) {
+        throw new Error(`${platformId} page was closed during response wait (likely Chrome crashed)`);
+      }
+      // 额外检查：尝试读取页面状态，捕获 protocol error
+      try {
+        await page.evaluate(() => document.title).catch(() => {});
+      } catch (healthErr) {
+        if (this._isRecoverableBrowserError(healthErr)) {
+          throw this._wrapRecoverableError(platformId, healthErr, 'waiting for a response');
+        }
+      }
+
+      let isLoading = false;
+      let snapshot = [];
+      try {
+        await this._checkBlockingChallenge(platformId);
+        isLoading = await this._isLoading(platformId);
+        snapshot = await this._getResponseSnapshot(platformId);
+      } catch (error) {
+        throw this._wrapRecoverableError(platformId, error, 'waiting for a response');
+      }
+
+      if (isLoading) { stableCount = 0; lastLoadingAt = Date.now(); }
+
+      const { text: candidateText, images: candidateImages } = this._selectNewResponse(snapshot, baseline);
+      if (!candidateText) continue;
+      const candidate = candidateText;
+
+      const hash = `${candidate.length}:${candidate.slice(-120)}`;
+      const isGrowing = candidate.length >= lastContent.length;
+      const isNewEnding = hash !== lastHash;
+      if (isGrowing && isNewEnding) {
+        lastContent = candidate;
+        lastHash = hash;
+        lastImages = candidateImages || [];
+        stableCount = 0;
+        logger.info(`[${platformId}] receiving response`, {
+          length: lastContent.length,
+          elapsedSeconds: Math.round((Date.now() - start) / 1000)
+        });
+      } else if (!isLoading) {
+        stableCount += 1;
+      }
+
+      const postLoadWait = lastLoadingAt > 0 ? Date.now() - lastLoadingAt : Infinity;
+      const isImageResponse = lastContent.startsWith('[图片内容');
+      if ((isImageResponse || lastContent.length > 20) && stableCount >= STABLE_POLLS && postLoadWait > 3000) {
+        const duration = Date.now() - start;
+        logger.info(`[${platformId}] response complete`, { length: lastContent.length, duration });
+        this._emit(hooks.BROWSER_EVENTS.RESPONSE_RECEIVED, {
+          platformId,
+          length: lastContent.length,
+          duration,
+          partial: false
+        });
+        return { response: lastContent, images: lastImages, partial: false, duration };
+      }
+    }
+
+    const duration = Date.now() - start;
+    if (lastContent) {
+      logger.warn(`[${platformId}] response timed out but partial content exists`, { length: lastContent.length, duration });
+      this._emit(hooks.BROWSER_EVENTS.RESPONSE_TIMEOUT, { platformId, duration, partial: true });
+      return { response: lastContent, images: lastImages, partial: true, duration };
+    }
+
+    this._emit(hooks.BROWSER_EVENTS.RESPONSE_TIMEOUT, { platformId, duration, partial: false });
+    throw new Error(`${platformId} response timed out after ${Math.round(maxWait / 1000)} seconds`);
+  }
+
+  async startNewConversation(platformId) {
+    const platform = this.platforms[platformId];
+    if (!platform) throw new Error(`unknown platform: ${platformId}`);
+
+    const page = await this.navigateTo(platformId);
+    if (!platform.newConversationSelector) {
+      this.conversationIds[platformId] = `conv_${Date.now()}`;
+      return true;
+    }
+
+    const { handle } = await this._findVisibleElement(page, platform.newConversationSelector);
+    if (handle) {
+      await handle.click();
+      await this._smartWait(1200);
+      this.conversationIds[platformId] = `conv_${Date.now()}`;
+      return true;
+    }
+
+    // Fallback: reload current platform URL when no explicit new-chat button is visible.
+    await page.goto(platform.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await this._smartWait(1200);
+    this.conversationIds[platformId] = `conv_${Date.now()}`;
+    return true;
+  }
+
+  async askQuestion(platformId, question, options = {}) {
+    const maxRetries = 1;
+    return this._enqueue(platformId, async () => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const { newConversation = false, mode = null } = options;
+          await this.navigateTo(platformId);
+
+          if (!this.loginConfirmations[platformId]) await this.waitForLoginConfirmation(platformId);
+          if (newConversation || !this.conversationIds[platformId]) await this.startNewConversation(platformId);
+
+          const baseline = await this._getResponseSnapshot(platformId).catch(error => {
+            if (this._isRecoverableBrowserError(error)) throw error;
+            return [];
+          });
+          await this.sendQuestion(platformId, question, mode);
+          const result = await this.waitForResponse(platformId, DEFAULT_MAX_WAIT, baseline);
+          return { ...result, mode };
+        } catch (error) {
+          const wrapped = this._wrapRecoverableError(platformId, error, 'asking a question');
+          if (attempt < maxRetries && wrapped.recoverable) {
+            logger.warn(`[${platformId}] attempt ${attempt + 1} failed, retrying...`, { error: wrapped.message });
+            await this._smartWait(2000);
+            continue;
+          }
+          throw wrapped;
+        }
+      }
+    });
+  }
+
+  async continueConversation(platformId, question) {
+    const maxRetries = 1;
+    return this._enqueue(platformId, async () => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          await this.navigateTo(platformId);
+          if (!this.loginConfirmations[platformId]) await this.waitForLoginConfirmation(platformId);
+
+          const baseline = await this._getResponseSnapshot(platformId).catch(error => {
+            if (this._isRecoverableBrowserError(error)) throw error;
+            return [];
+          });
+          await this.sendQuestion(platformId, question, null);
+          return await this.waitForResponse(platformId, DEFAULT_MAX_WAIT, baseline);
+        } catch (error) {
+          const wrapped = this._wrapRecoverableError(platformId, error, 'continuing a conversation');
+          if (attempt < maxRetries && wrapped.recoverable) {
+            logger.warn(`[${platformId}] continue attempt ${attempt + 1} failed, retrying...`, { error: wrapped.message });
+            await this._smartWait(2000);
+            continue;
+          }
+          throw wrapped;
+        }
+      }
+    });
+  }
+
+  endConversation(platformId) {
+    if (platformId) delete this.conversationIds[platformId];
+    else this.conversationIds = {};
+  }
+
+  async closePlatform(platformId) {
+    this._emit(hooks.BROWSER_EVENTS.CLOSING, { platformId });
+    if (this.pages[platformId] && !this.pages[platformId].isClosed()) await this.pages[platformId].close().catch(() => {});
+    delete this.pages[platformId];
+    delete this.conversationIds[platformId];
+    delete this.loginConfirmations[platformId];
+
+    if (this.browsers[platformId]) {
+      await this.browsers[platformId].close().catch(() => {});
+      delete this.browsers[platformId];
+    }
+    this._emit(hooks.BROWSER_EVENTS.CLOSED, { platformId });
+  }
+
+  async close() {
+    for (const platformId of Object.keys(this.pages)) await this.closePlatform(platformId).catch(() => {});
+    this.pages = {};
+    this.conversationIds = {};
+    this.loginConfirmations = {};
+
+    for (const browser of Object.values(this.browsers)) {
+      if (browser) await browser.close().catch(() => {});
+    }
+    this.browsers = {};
+  }
+}
+
+module.exports = BrowserAutomation;

@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 对比系统</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; color: #1a1a2e; margin-bottom: 30px; font-size: 28px; }
+    .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 18px; color: #333; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; color: #555; font-weight: 500; font-size: 14px; }
+    input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; transition: border-color 0.2s; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #4f46e5; }
+    textarea { height: 100px; resize: vertical; }
+    .btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn-primary { background: #4f46e5; color: white; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-success { background: #10b981; color: white; }
+    .btn-success:hover { background: #059669; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-secondary { background: #64748b; color: white; }
+    .btn-secondary:hover { background: #475569; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .status { margin-top: 10px; padding: 10px; border-radius: 8px; display: none; font-size: 14px; }
+    .status.success { background: #d1fae5; color: #065f46; display: block; }
+    .status.error { background: #fee2e2; color: #991b1b; display: block; }
+    .status.loading { background: #fef3c7; color: #92400e; display: block; }
+    .platforms-list { display: flex; flex-direction: column; gap: 10px; }
+    .platform-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; }
+    .platform-info { flex: 1; }
+    .platform-name { font-weight: 600; color: #1e293b; }
+    .platform-url { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .platform-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .platform-state { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .state-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #e2e8f0; color: #475569; }
+    .state-badge.ok { background: #d1fae5; color: #065f46; }
+    .state-badge.busy { background: #fef3c7; color: #92400e; }
+    .state-badge.warn { background: #fee2e2; color: #991b1b; }
+    .response-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-top: 15px; font-size: 14px; line-height: 1.6; max-height: 500px; overflow-y: auto; display: none; }
+    .response-box .markdown-body { white-space: pre-wrap; word-break: break-word; }
+    .response-box .markdown-body h1, .response-box .markdown-body h2, .response-box .markdown-body h3 { margin-top: 16px; margin-bottom: 8px; font-weight: 600; }
+    .response-box .markdown-body p { margin-bottom: 12px; }
+    .response-box .markdown-body code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: 'Consolas', monospace; }
+    .response-box .markdown-body pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; margin-bottom: 12px; }
+    .response-box .markdown-body pre code { background: none; color: inherit; padding: 0; }
+    .response-box .markdown-body ul, .response-box .markdown-body ol { margin-left: 24px; margin-bottom: 12px; }
+    .response-box .markdown-body li { margin-bottom: 4px; }
+    .response-box .markdown-body blockquote { border-left: 4px solid #4f46e5; padding-left: 16px; color: #64748b; margin-bottom: 12px; }
+    .response-box .markdown-body table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+    .response-box .markdown-body th, .response-box .markdown-body td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+    .response-box .markdown-body th { background: #f1f5f9; font-weight: 600; }
+    .tabs { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; flex-wrap: wrap; }
+    .tab { padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; color: #64748b; transition: all 0.2s; }
+    .tab.active { background: #4f46e5; color: white; }
+    .tab:hover:not(.active) { background: #f1f5f9; }
+    .hidden { display: none !important; }
+    .conversation-item:hover { border-color: #4f46e5 !important; background: #f8fafc; }
+    .compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
+    .compare-card { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+    .compare-header { background: #4f46e5; color: white; padding: 12px 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    .compare-header .badge { background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    .compare-body { padding: 16px; max-height: 400px; overflow-y: auto; }
+    .compare-body .markdown-body { font-size: 13px; line-height: 1.5; }
+    .export-btn { background: #8b5cf6; color: white; }
+    .export-btn:hover { background: #7c3aed; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 15px; }
+    .checkbox-group label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-weight: normal; }
+    .checkbox-group input[type="checkbox"] { width: auto; margin: 0; }
+    .toolbar { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+    .search-box { flex: 1; min-width: 200px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 15px; }
+    .stat-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; text-align: center; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #4f46e5; }
+    .stat-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+    @media (max-width: 768px) {
+      body { padding: 10px; }
+      .container { max-width: 100%; }
+      .compare-grid { grid-template-columns: 1fr; }
+      .tabs { gap: 6px; }
+      .tab { padding: 6px 12px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 AI 多平台对比系统</h1>
+
+    <!-- 统计概览 -->
+    <div class="card">
+      <h2>📊 系统概览</h2>
+      <div class="stats-grid" id="statsGrid"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+        <span style="font-size:12px;color:#64748b;">本地模式已启用（无需 API Key）</span>
+      </div>
+    </div>
+
+    <!-- 存储设置 -->
+    <div class="card">
+      <h2>💾 数据存储设置</h2>
+      <p style="color: #64748b; font-size: 13px; margin-bottom: 15px;">
+        选择对话记录和知识库的存储位置。切换后需重启服务器生效。
+      </p>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;" id="storageGrid">
+        <!-- 对话存储 -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+          <div style="font-weight:600; color:#1e293b; margin-bottom:12px;">📁 对话记录存储</div>
+          <div id="convStorageStatus" style="font-size:13px; color:#64748b; margin-bottom:12px;">加载中...</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" id="convLocalBtn" onclick="switchStorage('conversations','local')">🏠 本地存储</button>
+            <button class="btn btn-primary btn-sm" id="convGoogleBtn" onclick="switchStorage('conversations','google_drive')">☁️ Google Drive</button>
+          </div>
+        </div>
+
+        <!-- 知识库存储 -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+          <div style="font-weight:600; color:#1e293b; margin-bottom:12px;">📚 知识库存储</div>
+          <div id="kbStorageStatus" style="font-size:13px; color:#64748b; margin-bottom:12px;">加载中...</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" id="kbLocalBtn" onclick="switchStorage('knowledge','local')">🏠 本地存储</button>
+            <button class="btn btn-primary btn-sm" id="kbGoogleBtn" onclick="switchStorage('knowledge','google_drive')">☁️ Google Drive</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Google Drive 配置 -->
+      <div id="googleAuthSection" style="margin-top:16px; padding:16px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;">
+        <div style="font-weight:600; color:#1e293b; margin-bottom:10px;">🔗 Google Drive 连接方式</div>
+
+        <!-- 当前状态 -->
+        <div id="googleAuthStatus" style="font-size:13px; color:#64748b; margin-bottom:12px;">检查中...</div>
+
+        <!-- 方式1: Service Account（推荐） -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-bottom:10px; background:white;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+            <span style="font-weight:600; color:#10b981;">推荐</span>
+            <span style="font-weight:600;">方式一：Service Account（无需登录，直接访问）</span>
+          </div>
+          <p style="font-size:12px; color:#64748b; margin-bottom:10px;">
+            在 <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener">Google Cloud Console</a> 创建 Service Account，下载 JSON 密钥文件并上传。然后将 Service Account 的邮箱地址添加到你的 Google Drive 文件夹的共享权限中。
+          </p>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="file" id="saFileInput" accept=".json" style="display:none;" />
+            <button class="btn btn-success btn-sm" onclick="document.getElementById('saFileInput').click()">📁 上传 Service Account JSON</button>
+            <span id="saUploadStatus" style="font-size:12px;"></span>
+          </div>
+        </div>
+
+        <!-- 方式2: 本地挂载 Google Drive -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-bottom:10px; background:white;">
+          <div style="font-weight:600; margin-bottom:8px;">方式二：Google Drive 桌面客户端（最简单）</div>
+          <p style="font-size:12px; color:#64748b; margin-bottom:8px;">
+            安装 <a href="https://www.google.com/drive/download/" target="_blank" rel="noopener">Google Drive 桌面客户端</a>，它会将云端硬盘映射为本地磁盘（如 <code>G:\My Drive</code>）。然后在下方输入该路径即可。
+          </p>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="localDrivePath" placeholder="例如: G:\\My Drive\\ai-compare-data" style="flex:1; min-width:200px; padding:6px 10px; font-size:13px; border:1px solid #ddd; border-radius:6px;" />
+            <button class="btn btn-secondary btn-sm" onclick="applyLocalDrivePath()">应用路径</button>
+          </div>
+        </div>
+
+        <!-- 方式3: OAuth（需要应用审核） -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:12px; background:white; opacity:0.7;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <span style="font-weight:600;">方式三：Google OAuth（需应用审核）</span>
+              <span style="font-size:11px; color:#ef4444; margin-left:8px;">当前不可用</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="googleOAuthBtn" onclick="googleAuth()" disabled>授权</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 全部切换 -->
+      <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-success btn-sm" onclick="switchStorage('all','local')">🏠 全部切换到本地</button>
+        <button class="btn btn-primary btn-sm" onclick="switchStorage('all','google_drive')">☁️ 全部切换到 Google Drive</button>
+      </div>
+
+      <div id="storageSwitchStatus" class="status" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- 平台管理 -->
+    <div class="card">
+      <h2>⚙️ 平台管理</h2>
+      <div class="tabs">
+        <div class="tab active" data-tab="list">平台列表</div>
+        <div class="tab" data-tab="add">添加平台</div>
+      </div>
+
+      <div id="tab-list">
+        <div class="platforms-list" id="platformsList"></div>
+      </div>
+
+      <div id="tab-add" class="hidden">
+        <div class="form-group">
+          <label>平台 ID（英文，如 chatgpt）</label>
+          <input type="text" id="newPlatformId" placeholder="chatgpt">
+        </div>
+        <div class="form-group">
+          <label>平台名称</label>
+          <input type="text" id="newPlatformName" placeholder="ChatGPT">
+        </div>
+        <div class="form-group">
+          <label>网址</label>
+          <input type="text" id="newPlatformUrl" placeholder="https://chat.openai.com/">
+        </div>
+        <div class="form-group">
+          <label>输入框选择器（多个用逗号分隔）</label>
+          <input type="text" id="newPlatformInput" placeholder="textarea, #prompt-textarea">
+        </div>
+        <div class="form-group">
+          <label>回答内容选择器</label>
+          <input type="text" id="newPlatformResponse" placeholder=".markdown, [class*='message']">
+        </div>
+        <div class="form-group">
+          <label>加载状态选择器（可选，用于检测 AI 思考中）</label>
+          <input type="text" id="newPlatformLoading" placeholder="[class*='loading'], [class*='thinking']">
+        </div>
+        <div class="form-group">
+          <label>提交按钮选择器（可选）</label>
+          <input type="text" id="newPlatformSubmit" placeholder="button[type='submit'], button[aria-label*='Send']">
+        </div>
+        <div class="form-group">
+          <label>停止生成选择器（可选）</label>
+          <input type="text" id="newPlatformStop" placeholder="button[aria-label*='Stop']">
+        </div>
+        <div class="form-group">
+          <label>新对话选择器（可选）</label>
+          <input type="text" id="newPlatformNewConversation" placeholder="a[href='/new'], button[class*='new']">
+        </div>
+        <div class="form-group">
+          <label>验证码/人工验证指示器（可选，多个用逗号分隔）</label>
+          <input type="text" id="newPlatformCaptcha" placeholder="iframe[src*='challenges.cloudflare.com'], #challenge-running">
+        </div>
+        <button class="btn btn-success" id="addPlatformBtn">➕ 添加平台</button>
+        <div id="addStatus" class="status"></div>
+      </div>
+    </div>
+
+    <!-- 提问区域 -->
+    <div class="card">
+      <h2>💬 提问</h2>
+      <div class="form-group">
+        <label>选择平台（多选用于对比）</label>
+        <div class="checkbox-group" id="platformCheckboxes"></div>
+      </div>
+      <div class="form-group">
+        <label>你的问题</label>
+        <textarea id="questionInput" placeholder="输入你想问的问题..."></textarea>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" id="askBtn">🚀 发送提问</button>
+        <button class="btn btn-success" id="compareBtn">🔄 并行对比</button>
+        <button class="btn btn-secondary" id="continueBtn">💬 继续对话</button>
+        <button class="btn btn-secondary" id="newConvBtn">🆕 新对话</button>
+        <button class="btn export-btn" id="exportBtn">📥 导出结果</button>
+      </div>
+      <div id="askStatus" class="status"></div>
+      <div class="response-box" id="responseBox"></div>
+      <div id="compareContainer" class="hidden"></div>
+    </div>
+
+    <!-- 对话历史 -->
+    <div class="card">
+      <h2>💬 对话历史</h2>
+      <div class="toolbar">
+        <input type="text" class="search-box" id="historySearch" placeholder="搜索对话历史...">
+        <button class="btn btn-secondary btn-sm" id="loadHistoryBtn">加载历史</button>
+      </div>
+      <div id="conversationList"></div>
+    </div>
+
+    <!-- 知识库管理 -->
+    <div class="card">
+      <h2>📚 知识库</h2>
+      <p style="color: #64748b; font-size: 13px; margin-bottom: 15px;">
+        提问前自动搜索知识库，找到相似问题直接返回答案，避免重复请求 AI
+      </p>
+      <div class="toolbar">
+        <button class="btn btn-secondary btn-sm" id="loadKnowledgeBtn">加载知识库</button>
+      </div>
+      <div id="knowledgeList"></div>
+    </div>
+  </div>
+
+  <script>
+    const API = 'http://localhost:3000/api';
+    const API_KEY_STORAGE = 'ai_compare_api_key';
+    let apiKey = localStorage.getItem(API_KEY_STORAGE) || '';
+
+    function setApiKey(key) {
+      apiKey = (key || '').trim();
+      if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey);
+      else localStorage.removeItem(API_KEY_STORAGE);
+    }
+
+    function getAuthHeaders(extra = {}) {
+      const h = { 'Content-Type': 'application/json', ...extra };
+      if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
+      return h;
+    }
+
+    async function apiFetch(path, options = {}) {
+      const url = path.startsWith('http') ? path : API + path;
+      const headers = getAuthHeaders(options.headers || {});
+      const res = await fetch(url, { ...options, headers });
+      if (res.status === 401) {
+        const key = prompt('请输入 API Key（在服务端 .env 的 API_KEYS 中配置）：');
+        if (key) {
+          setApiKey(key);
+          return apiFetch(path, options);
+        }
+      }
+      return res;
+    }
+    let currentConvId = null;
+    let lastCompareResults = null;
+    let selectedPlatforms = new Set(['deepseek']);
+    let platformStatus = {};
+    let historyLoaded = false;
+    let knowledgeLoaded = false;
+
+    const $ = id => document.getElementById(id);
+    const clear = el => el.replaceChildren();
+
+    function appendText(el, text, tag = 'div') {
+      const node = document.createElement(tag);
+      node.textContent = text;
+      el.appendChild(node);
+      return node;
+    }
+
+    function emptyMessage(text) {
+      const p = document.createElement('p');
+      p.style.color = '#999';
+      p.style.textAlign = 'center';
+      p.textContent = text;
+      return p;
+    }
+
+    function setPanelPlaceholder(container, text) {
+      clear(container);
+      container.appendChild(emptyMessage(text));
+    }
+
+    function renderImages(images) {
+      if (!images || images.length === 0) return '';
+      return '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0;">' +
+        images.map(url => {
+          const safeUrl = url.startsWith('data:') ? url : url.replace(/[&<>"]/g, '');
+          return `<img src="${safeUrl}" style="max-width:400px;max-height:400px;border-radius:8px;border:1px solid #e2e8f0;cursor:pointer;" onclick="window.open(this.src,'_blank')" loading="lazy" />`;
+        }).join('') +
+        '</div>';
+    }
+
+        function renderMarkdown(text) {
+      const raw = typeof marked !== 'undefined' ? marked.parse(String(text || '')) : String(text || '').replace(/\n/g, '<br>');
+      const doc = new DOMParser().parseFromString(raw, 'text/html');
+      const allowedTags = new Set(['P', 'BR', 'STRONG', 'B', 'EM', 'I', 'CODE', 'PRE', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'HR', 'A']);
+      const allowedAttrs = new Set(['href', 'title']);
+
+      doc.body.querySelectorAll('*').forEach(el => {
+        if (!allowedTags.has(el.tagName)) {
+          el.replaceWith(...Array.from(el.childNodes));
+          return;
+        }
+
+        Array.from(el.attributes).forEach(attr => {
+          const name = attr.name.toLowerCase();
+          if (!allowedAttrs.has(name)) el.removeAttribute(attr.name);
+        });
+
+        if (el.tagName === 'A') {
+          const href = el.getAttribute('href') || '';
+          if (!/^https?:\/\//i.test(href)) el.removeAttribute('href');
+          el.setAttribute('rel', 'noopener noreferrer');
+          el.setAttribute('target', '_blank');
+        }
+      });
+
+      return doc.body.innerHTML;
+    }
+
+    function escapeHtml(text) {
+      return String(text || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-list').classList.toggle('hidden', tab.dataset.tab !== 'list');
+        document.getElementById('tab-add').classList.toggle('hidden', tab.dataset.tab !== 'add');
+      });
+    });
+
+    function showStatus(el, msg, type = 'loading') {
+      el.textContent = msg;
+      el.className = 'status ' + type;
+    }
+
+    async function loadStats() {
+      try {
+        const res = await apiFetch('/stats');
+        const stats = await res.json();
+        const grid = $('statsGrid');
+        clear(grid);
+
+        const items = [
+          { value: stats.totalQuestions, label: '总问题数' },
+          { value: stats.totalResponses, label: '总回答数' },
+          { value: stats.platformStats.length, label: '活跃平台' }
+        ];
+
+        items.forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'stat-card';
+          card.innerHTML = `<div class="stat-value">${item.value}</div><div class="stat-label">${item.label}</div>`;
+          grid.appendChild(card);
+        });
+      } catch (e) {
+        console.error('加载统计失败:', e);
+      }
+    }
+
+    function platformStatusBadges(status) {
+      const state = document.createElement('div');
+      state.className = 'platform-state';
+
+      const badges = [
+        { text: status?.pageOpen ? '已打开' : '未打开', type: status?.pageOpen ? 'ok' : 'warn' },
+        { text: status?.loggedIn ? '已确认登录' : '待确认登录', type: status?.loggedIn ? 'ok' : 'warn' },
+        { text: status?.busy ? '队列中' : '空闲', type: status?.busy ? 'busy' : '' }
+      ];
+
+      badges.forEach(({ text, type }) => {
+        const badge = document.createElement('span');
+        badge.className = `state-badge ${type}`.trim();
+        badge.textContent = text;
+        state.appendChild(badge);
+      });
+
+      if (status?.currentUrl) {
+        const url = document.createElement('span');
+        url.className = 'state-badge';
+        url.textContent = status.currentUrl.substring(0, 70);
+        state.appendChild(url);
+      }
+
+      return state;
+    }
+
+    async function loadPlatformStatus() {
+      try {
+        const res = await apiFetch('/platform-status');
+        platformStatus = await res.json();
+      } catch (e) {
+        platformStatus = {};
+      }
+    }
+
+    async function loadPlatforms() {
+      try {
+        await loadPlatformStatus();
+        const res = await apiFetch('/platforms');
+        const data = await res.json();
+        clear(platformsList);
+        clear(platformCheckboxes);
+
+        const entries = Object.entries(data);
+        if (entries.length === 0) {
+          platformsList.appendChild(emptyMessage('暂无平台'));
+          return;
+        }
+
+        entries.forEach(([id, p]) => {
+          const item = document.createElement('div');
+          item.className = 'platform-item';
+
+          const info = document.createElement('div');
+          info.className = 'platform-info';
+          const name = appendText(info, p.name, 'div');
+          name.className = 'platform-name';
+          const url = appendText(info, p.url, 'div');
+          url.className = 'platform-url';
+          info.appendChild(platformStatusBadges(platformStatus[id]));
+
+          const actions = document.createElement('div');
+          actions.className = 'platform-actions';
+          const openBtn = document.createElement('button');
+          openBtn.className = 'btn btn-secondary btn-sm';
+          openBtn.textContent = '打开';
+          openBtn.addEventListener('click', () => openPlatform(id));
+          const confirmBtn = document.createElement('button');
+          confirmBtn.className = 'btn btn-success btn-sm';
+          confirmBtn.textContent = '确认登录';
+          confirmBtn.addEventListener('click', () => confirmLogin(id));
+          const switchBtn = document.createElement('button');
+          switchBtn.className = 'btn btn-primary btn-sm';
+          switchBtn.textContent = '切换';
+          switchBtn.addEventListener('click', () => switchTo(id));
+          const deleteBtn = document.createElement('button');
+          deleteBtn.className = 'btn btn-danger btn-sm';
+          deleteBtn.textContent = '删除';
+          deleteBtn.addEventListener('click', () => deletePlatform(id));
+          actions.append(openBtn, confirmBtn, switchBtn, deleteBtn);
+
+          item.append(info, actions);
+          platformsList.appendChild(item);
+
+          const label = document.createElement('label');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = id;
+          checkbox.checked = selectedPlatforms.has(id);
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) selectedPlatforms.add(id);
+            else selectedPlatforms.delete(id);
+          });
+          label.append(checkbox, document.createTextNode(p.name));
+          platformCheckboxes.appendChild(label);
+        });
+      } catch (e) {
+        console.error('加载平台失败:', e);
+      }
+    }
+
+    addPlatformBtn.addEventListener('click', async () => {
+      const id = $('newPlatformId').value.trim();
+      const name = $('newPlatformName').value.trim();
+      const url = $('newPlatformUrl').value.trim();
+      const inputSelector = $('newPlatformInput').value.trim();
+      const responseSelector = $('newPlatformResponse').value.trim();
+      const loadingSelector = $('newPlatformLoading').value.trim();
+      const submitSelector = $('newPlatformSubmit').value.trim();
+      const stopSelector = $('newPlatformStop').value.trim();
+      const newConversationSelector = $('newPlatformNewConversation').value.trim();
+      const captchaIndicators = $('newPlatformCaptcha').value.trim();
+
+      if (!id || !name || !url) {
+        showStatus(addStatus, '请填写 ID、名称和网址', 'error');
+        return;
+      }
+
+      showStatus(addStatus, '添加中...', 'loading');
+      addPlatformBtn.disabled = true;
+
+      try {
+        const res = await apiFetch(`/platforms`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id,
+            name,
+            url,
+            inputSelector,
+            responseSelector,
+            loadingSelector,
+            submitSelector,
+            stopSelector,
+            newConversationSelector,
+            captchaIndicators
+          })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          showStatus(addStatus, '添加成功', 'success');
+          loadPlatforms();
+          ['newPlatformId', 'newPlatformName', 'newPlatformUrl', 'newPlatformInput', 'newPlatformResponse', 'newPlatformLoading', 'newPlatformSubmit', 'newPlatformStop', 'newPlatformNewConversation', 'newPlatformCaptcha']
+            .forEach(inputId => $(inputId).value = '');
+        } else {
+          showStatus(addStatus, data.error || '添加失败', 'error');
+        }
+      } catch (e) {
+        showStatus(addStatus, '网络错误', 'error');
+      } finally {
+        addPlatformBtn.disabled = false;
+      }
+    });
+
+    window.openPlatform = async (platform) => {
+      showStatus(askStatus, `正在打开 ${platform}，请稍候...`, 'loading');
+      loadPlatforms(); // 先刷新一次状态
+      try {
+        const res = await apiFetch(`/open-platform/${platform}`, { method: 'POST' });
+        const data = await res.json();
+        showStatus(askStatus, data.success ? `${data.message}（如需登录，请在弹出的浏览器窗口中登录，然后点击"确认登录"）` : data.error || '打开失败', data.success ? 'success' : 'error');
+        loadPlatforms();
+      } catch (e) {
+        showStatus(askStatus, '打开失败: 网络错误或服务器未响应', 'error');
+      }
+    };
+
+    window.confirmLogin = async (platform) => {
+      showStatus(askStatus, `正在确认 ${platform} 登录...`, 'loading');
+      try {
+        const res = await apiFetch(`/confirm-login/${platform}`, { method: 'POST' });
+        const data = await res.json();
+        showStatus(askStatus, data.success ? data.message : data.error || '确认失败', data.success ? 'success' : 'error');
+        loadPlatforms();
+      } catch (e) {
+        showStatus(askStatus, '确认失败', 'error');
+      }
+    };
+
+    window.switchTo = async (platform) => {
+      showStatus(askStatus, `正在切换到 ${platform}...`, 'loading');
+      try {
+        const res = await apiFetch(`/switch-platform`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ platform })
+        });
+        const data = await res.json();
+        showStatus(askStatus, data.success ? `已切换到 ${platform}` : data.error || '切换失败', data.success ? 'success' : 'error');
+      } catch (e) {
+        showStatus(askStatus, '切换失败', 'error');
+      }
+    };
+
+    window.deletePlatform = async (id) => {
+      if (!confirm('确定删除该平台？')) return;
+      try {
+        await apiFetch(`/platforms/${id}`, { method: 'DELETE' });
+        loadPlatforms();
+      } catch (e) {
+        alert('删除失败');
+      }
+    };
+
+    function statusWithPartial(data, text) {
+      return data.partial ? `${text}（超时，已返回部分内容）` : text;
+    }
+
+    function scheduleAiWaitHint(platformText) {
+      return setTimeout(() => {
+        showStatus(askStatus, `索引检查已结束，正在等待 ${platformText} 网页 AI 回答...`, 'loading');
+      }, 1800);
+    }
+
+    function formatAnswerStatus(data, fallbackStatus) {
+      const indexNote = data.indexTimedOut ? '（索引超时，已直接请求网页 AI）' : '';
+      return `${fallbackStatus}${indexNote}`;
+    }
+
+    function renderAnswer(data, fallbackStatus) {
+      if (data.fromKnowledge) {
+        showStatus(askStatus, `从知识库找到相似答案，相似度 ${(data.similarity * 100).toFixed(0)}%  —  请点击下方按钮选择操作`, 'success');
+        const kbHeader = `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:12px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <span style="color:#065f46;font-weight:600;">📚 知识库命中（相似度 ${(data.similarity * 100).toFixed(0)}%）</span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-success btn-sm" id="acceptKbBtn">✅ 采纳此答案</button>
+              <button class="btn btn-primary btn-sm" id="retryAiBtn">🔄 重新提问网页 AI</button>
+            </div>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:6px;">原问题: "${escapeHtml(data.originalQuestion || '').substring(0, 60)}..."</div>
+        </div>`;
+        responseBox.innerHTML = `${kbHeader}<div class="markdown-body">${renderMarkdown(data.response)}</div>`;
+
+        // 采纳按钮 - 确认使用知识库答案
+        document.getElementById('acceptKbBtn').addEventListener('click', () => {
+          showStatus(askStatus, '已采纳知识库答案', 'success');
+          document.getElementById('acceptKbBtn').disabled = true;
+          document.getElementById('retryAiBtn').disabled = true;
+          document.getElementById('acceptKbBtn').textContent = '✅ 已采纳';
+        });
+
+        // 重新提问按钮 - 绕过知识库直接请求网页 AI
+        document.getElementById('retryAiBtn').addEventListener('click', async () => {
+          const retryBtn = document.getElementById('retryAiBtn');
+          const acceptBtn = document.getElementById('acceptKbBtn');
+          retryBtn.disabled = true;
+          acceptBtn.disabled = true;
+          retryBtn.textContent = '⏳ 请求中...';
+          showStatus(askStatus, `正在跳过知识库，直接请求 ${data.platform || 'AI'} 网页端...`, 'loading');
+
+          try {
+            const res = await apiFetch('/ask-retry', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                question: questionInput.value.trim() || data.originalQuestion,
+                platform: data.platform || Array.from(selectedPlatforms)[0],
+                newConversation: true
+              })
+            });
+            const retryData = await res.json();
+            if (retryData.success) {
+              // 用网页 AI 的结果重新渲染（不再显示采纳按钮）
+              retryData.fromKnowledge = false;
+              renderAnswer(retryData, '网页 AI 回答完成');
+            } else {
+              showStatus(askStatus, retryData.error || '重新提问失败', 'error');
+              retryBtn.disabled = false;
+              retryBtn.textContent = '🔄 重试';
+            }
+          } catch (err) {
+            showStatus(askStatus, '网络错误', 'error');
+            retryBtn.disabled = false;
+            retryBtn.textContent = '🔄 重试';
+          }
+        });
+      } else {
+        showStatus(askStatus, statusWithPartial(data, formatAnswerStatus(data, fallbackStatus)), data.partial ? 'loading' : 'success');
+        const imgHtml = renderImages(data.images);
+        responseBox.innerHTML = `<div class="markdown-body">${data.partial ? '<p><em>响应超时，以下为已获取的部分内容。</em></p>' : ''}${renderMarkdown(data.response)}${imgHtml}</div>`;
+      }
+      responseBox.style.display = 'block';
+      compareContainer.classList.add('hidden');
+      currentConvId = data.conversation_id;
+      if (historyLoaded) loadHistory();
+      if (knowledgeLoaded) loadKnowledge();
+      loadStats();
+      loadPlatforms();
+    }
+
+    function renderCompareResults(results, question) {
+      lastCompareResults = { results, question };
+      compareContainer.classList.remove('hidden');
+      responseBox.style.display = 'none';
+      compareContainer.innerHTML = '';
+
+      const grid = document.createElement('div');
+      grid.className = 'compare-grid';
+
+      Object.entries(results).forEach(([platformId, data]) => {
+        const card = document.createElement('div');
+        card.className = 'compare-card';
+
+        const header = document.createElement('div');
+        header.className = 'compare-header';
+        const title = document.createElement('span');
+        title.textContent = platformId;
+        header.appendChild(title);
+
+        if (data.fromKnowledge) {
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = `知识库 ${(data.similarity * 100).toFixed(0)}%`;
+          header.appendChild(badge);
+        }
+
+        const body = document.createElement('div');
+        body.className = 'compare-body';
+
+        if (data.error) {
+          body.innerHTML = `<p style="color: #ef4444;">错误: ${escapeHtml(data.error)}</p>`;
+        } else {
+          const imgHtml = renderImages(data.images);
+          body.innerHTML = `<div class="markdown-body">${data.partial ? '<p><em>响应超时，以下为已获取的部分内容。</em></p>' : ''}${renderMarkdown(data.response)}${imgHtml}</div>`;
+        }
+
+        card.append(header, body);
+        grid.appendChild(card);
+      });
+
+      compareContainer.appendChild(grid);
+      showStatus(askStatus, '对比完成', 'success');
+      if (historyLoaded) loadHistory();
+      if (knowledgeLoaded) loadKnowledge();
+      loadStats();
+    }
+
+    askBtn.addEventListener('click', async () => {
+      const question = questionInput.value.trim();
+      const platforms = Array.from(selectedPlatforms);
+
+      if (!question) { showStatus(askStatus, '请输入问题', 'error'); return; }
+      if (platforms.length === 0) { showStatus(askStatus, '请选择至少一个平台', 'error'); return; }
+
+      const platform = platforms[0];
+      showStatus(askStatus, `正在快速检查 ${platform} 索引，超过 1.2 秒会直接请求网页 AI...`, 'loading');
+      const aiWaitHint = scheduleAiWaitHint(platform);
+      askBtn.disabled = true;
+      continueBtn.disabled = true;
+      responseBox.style.display = 'none';
+      compareContainer.classList.add('hidden');
+
+      try {
+        const res = await apiFetch(`/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, platform, newConversation: true })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          renderAnswer(data, `回答完成，模式: ${data.mode || '默认'}`);
+        } else {
+          showStatus(askStatus, data.error || '提问失败', 'error');
+        }
+      } catch (e) {
+        showStatus(askStatus, '网络错误', 'error');
+      } finally {
+        clearTimeout(aiWaitHint);
+        askBtn.disabled = false;
+        continueBtn.disabled = false;
+      }
+    });
+
+    compareBtn.addEventListener('click', async () => {
+      const question = questionInput.value.trim();
+      const platforms = Array.from(selectedPlatforms);
+
+      if (!question) { showStatus(askStatus, '请输入问题', 'error'); return; }
+      if (platforms.length < 2) { showStatus(askStatus, '请选择至少两个平台进行对比', 'error'); return; }
+
+      showStatus(askStatus, `正在快速检查索引并向 ${platforms.join(', ')} 请求网页 AI...`, 'loading');
+      const aiWaitHint = scheduleAiWaitHint(platforms.join(', '));
+      compareBtn.disabled = true;
+      responseBox.style.display = 'none';
+      compareContainer.classList.add('hidden');
+
+      try {
+        const res = await apiFetch(`/ask-all`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, platforms, newConversation: true })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          renderCompareResults(data.results, question);
+        } else {
+          showStatus(askStatus, data.error || '对比失败', 'error');
+        }
+      } catch (e) {
+        showStatus(askStatus, '网络错误', 'error');
+      } finally {
+        clearTimeout(aiWaitHint);
+        compareBtn.disabled = false;
+      }
+    });
+
+    continueBtn.addEventListener('click', async () => {
+      const question = questionInput.value.trim();
+      const platforms = Array.from(selectedPlatforms);
+      const platform = platforms[0] || 'deepseek';
+
+      if (!question) { showStatus(askStatus, '请输入问题', 'error'); return; }
+
+      showStatus(askStatus, `正在快速检查 ${platform} 索引，超过 1.2 秒会直接继续网页 AI...`, 'loading');
+      const aiWaitHint = scheduleAiWaitHint(platform);
+      continueBtn.disabled = true;
+
+      try {
+        const res = await apiFetch(`/continue`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, platform })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          renderAnswer(data, '追问完成');
+        } else {
+          showStatus(askStatus, data.error || '追问失败', 'error');
+        }
+      } catch (e) {
+        showStatus(askStatus, '网络错误', 'error');
+      } finally {
+        clearTimeout(aiWaitHint);
+        continueBtn.disabled = false;
+      }
+    });
+
+    newConvBtn.addEventListener('click', async () => {
+      const platforms = Array.from(selectedPlatforms);
+      const platform = platforms[0] || 'deepseek';
+      try {
+        const res = await apiFetch(`/new-conversation`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ platform })
+        });
+        const data = await res.json();
+        showStatus(askStatus, data.success ? '新对话已开始' : data.error || '操作失败', data.success ? 'success' : 'error');
+        responseBox.style.display = 'none';
+        compareContainer.classList.add('hidden');
+        currentConvId = null;
+      } catch (e) {
+        showStatus(askStatus, '操作失败', 'error');
+      }
+    });
+
+    exportBtn.addEventListener('click', () => {
+      if (!lastCompareResults) {
+        showStatus(askStatus, '没有可导出的对比结果', 'error');
+        return;
+      }
+
+      const { results, question } = lastCompareResults;
+      let markdown = `# AI 对比结果\n\n`;
+      markdown += `**问题**: ${question}\n\n`;
+      markdown += `**时间**: ${new Date().toLocaleString()}\n\n`;
+      markdown += `---\n\n`;
+
+      Object.entries(results).forEach(([platformId, data]) => {
+        markdown += `## ${platformId}\n\n`;
+        if (data.error) {
+          markdown += `**错误**: ${data.error}\n\n`;
+        } else {
+          if (data.fromKnowledge) {
+            markdown += `*来自知识库，相似度 ${(data.similarity * 100).toFixed(0)}%*\n\n`;
+          }
+          markdown += `${data.response}\n\n`;
+        }
+        markdown += `---\n\n`;
+      });
+
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ai-compare-${Date.now()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showStatus(askStatus, '导出成功', 'success');
+    });
+
+    async function loadHistory() {
+      try {
+        historyLoaded = true;
+        setPanelPlaceholder(conversationList, '正在加载对话历史...');
+        const res = await apiFetch('/conversations?limit=20');
+        const conversations = await res.json();
+        clear(conversationList);
+
+        if (conversations.length === 0) {
+          conversationList.appendChild(emptyMessage('暂无对话记录'));
+          return;
+        }
+
+        conversations.forEach(conv => {
+          const item = document.createElement('div');
+          item.className = 'conversation-item';
+          item.style.cssText = 'padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;';
+          item.addEventListener('click', () => showConversation(conv.conversation_id));
+          item.dataset.question = conv.first_question.toLowerCase();
+
+          const row = document.createElement('div');
+          row.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+          const left = document.createElement('div');
+          left.style.flex = '1';
+          const title = appendText(left, `${conv.first_question.substring(0, 50)}${conv.first_question.length > 50 ? '...' : ''}`);
+          title.style.cssText = 'font-weight: 600; color: #1e293b; margin-bottom: 4px;';
+          const meta = appendText(left, `${conv.question_count} 轮对话 · ${conv.platforms.join(', ') || '未知平台'} · ${new Date(conv.created_at).toLocaleString()}`);
+          meta.style.cssText = 'font-size: 12px; color: #64748b;';
+          const view = appendText(row, '查看 →');
+          const delBtn = document.createElement('button');
+          delBtn.className = 'btn btn-danger btn-sm';
+          delBtn.textContent = '删除';
+          delBtn.style.cssText = 'padding: 3px 8px; font-size: 11px;';
+          delBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!confirm('确定删除该对话及其所有问答记录？')) return;
+            try {
+              const res = await apiFetch(`/conversations/${conv.conversation_id}`, { method: 'DELETE' });
+              const data = await res.json();
+              if (data.success) {
+                loadHistory();
+                loadStats();
+                showStatus(askStatus, '对话已删除', 'success');
+              } else {
+                alert(data.error || '删除失败');
+              }
+            } catch (err) {
+              alert('删除失败: 网络错误');
+            }
+          });
+          view.style.cssText = 'color: #4f46e5; font-size: 12px; margin-right: 8px;';
+          row.prepend(left);
+          row.appendChild(delBtn);
+          item.appendChild(row);
+          conversationList.appendChild(item);
+        });
+      } catch (e) {
+        console.error('加载对话历史失败:', e);
+        setPanelPlaceholder(conversationList, '加载对话历史失败');
+      }
+    }
+
+    historySearch.addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      document.querySelectorAll('.conversation-item').forEach(item => {
+        const text = item.dataset.question || '';
+        item.style.display = text.includes(query) ? '' : 'none';
+      });
+    });
+
+    window.showConversation = async (convId) => {
+      try {
+        const res = await apiFetch(`/conversations/${convId}/history`);
+        const history = await res.json();
+
+        if (history.length === 0) {
+          responseBox.textContent = '暂无对话记录';
+          responseBox.style.display = 'block';
+          return;
+        }
+
+        currentConvId = convId;
+        compareContainer.classList.add('hidden');
+
+        let html = `<div class="markdown-body">`;
+        html += `<h3>对话历史 (共 ${history.length} 轮)</h3>`;
+        html += `<p><em>点击下方"继续对话"按钮可在此对话中继续提问</em></p>\n\n`;
+
+        history.forEach((item, index) => {
+          html += `<h4>第 ${index + 1} 轮</h4>`;
+          html += `<p><strong>问题:</strong> ${escapeHtml(item.question)}</p>`;
+          if (item.responses && item.responses.length > 0) {
+            item.responses.forEach(r => {
+              html += `<p><strong>${escapeHtml(r.platform)} 回答:</strong></p>`;
+              html += renderMarkdown(r.response);
+            });
+          } else {
+            html += `<p><em>等待回答...</em></p>`;
+          }
+          html += `<hr>\n`;
+        });
+
+        html += `</div>`;
+        responseBox.innerHTML = html;
+        responseBox.style.display = 'block';
+        responseBox.scrollTop = 0;
+      } catch (e) {
+        console.error('加载对话详情失败:', e);
+        responseBox.textContent = '加载对话详情失败';
+        responseBox.style.display = 'block';
+      }
+    };
+
+    async function loadKnowledge() {
+      try {
+        knowledgeLoaded = true;
+        setPanelPlaceholder(knowledgeList, '正在加载知识库...');
+        const [knowledgeRes, storageRes] = await Promise.all([
+          apiFetch('/knowledge'),
+          apiFetch('/storage')
+        ]);
+        const stats = await knowledgeRes.json();
+        const storage = await storageRes.json();
+        clear(knowledgeList);
+
+        const storageInfo = document.createElement('div');
+        storageInfo.style.cssText = 'font-size: 12px; color: #64748b; margin-bottom: 12px; line-height: 1.6;';
+        storageInfo.textContent = `知识库目录: ${storage.knowledge.path}；对话目录: ${storage.conversations.path}`;
+        knowledgeList.appendChild(storageInfo);
+
+        if (stats.length === 0) {
+          knowledgeList.appendChild(emptyMessage('暂无知识库数据'));
+          return;
+        }
+
+        stats.forEach(s => {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px;';
+          const row = document.createElement('div');
+          row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; gap: 12px;';
+          const left = document.createElement('div');
+          const platform = appendText(left, s.platform);
+          platform.style.cssText = 'font-weight: 600; color: #1e293b;';
+          const meta = appendText(left, `${s.totalEntries} 条记录${s.lastUpdated ? ' · 最后更新: ' + new Date(s.lastUpdated).toLocaleString() : ''}`);
+          meta.style.cssText = 'font-size: 12px; color: #64748b;';
+          const top = appendText(row, s.topEntries.length > 0 ? '热门: ' + s.topEntries[0].question : '暂无热门');
+          top.style.cssText = 'font-size: 12px; color: #4f46e5;';
+          row.prepend(left);
+          item.appendChild(row);
+          knowledgeList.appendChild(item);
+        });
+      } catch (e) {
+        console.error('加载知识库失败:', e);
+        setPanelPlaceholder(knowledgeList, '加载知识库失败');
+      }
+    }
+
+    loadHistoryBtn.addEventListener('click', loadHistory);
+    loadKnowledgeBtn.addEventListener('click', loadKnowledge);
+
+    setPanelPlaceholder(conversationList, '对话历史已延后加载，点击“加载历史”查看。');
+    setPanelPlaceholder(knowledgeList, '知识库已延后加载，点击“加载知识库”查看。');
+    // API Key UI removed for local mode
+
+
+    // ======== 存储管理 ========
+    async function loadStorageMode() {
+      try {
+        const res = await apiFetch('/storage/mode');
+        const data = await res.json();
+
+        // 对话存储状态
+        var convStatus = document.getElementById('convStorageStatus');
+        if (convStatus) {
+          var convIsCloud = data.conversations.mode === 'google_drive';
+          var convIcon = convIsCloud ? '☁️' : '🏠';
+          var convLabel = convIsCloud ? 'Google Drive' : '本地存储';
+          var convAuto = data.conversations.autoDetected ? ' <span style="color:#10b981;font-size:11px;">(自动检测)</span>' : '';
+          convStatus.innerHTML = `当前: <strong>${convIcon} ${convLabel}</strong>${convAuto}<br><span style="font-size:11px;">${data.conversations.path}</span>`;
+        }
+
+        // 知识库存储状态
+        var kbStatus = document.getElementById('kbStorageStatus');
+        if (kbStatus) {
+          var kbIsCloud = data.knowledge.mode === 'google_drive';
+          var kbIcon = kbIsCloud ? '☁️' : '🏠';
+          var kbLabel = kbIsCloud ? 'Google Drive' : '本地存储';
+          var kbAuto = data.knowledge.autoDetected ? ' <span style="color:#10b981;font-size:11px;">(自动检测)</span>' : '';
+          kbStatus.innerHTML = `当前: <strong>${kbIcon} ${kbLabel}</strong>${kbAuto}<br><span style="font-size:11px;">${data.knowledge.path}</span>`;
+        }
+
+        // Google 授权状态
+        var authStatus = document.getElementById('googleAuthStatus');
+        if (authStatus && data.google) {
+          if (data.google.authorized) {
+            var methodLabel = data.google.authMethod === 'service_account'
+              ? '✅ 已通过 Service Account 连接' : '✅ 已通过 OAuth 授权';
+            authStatus.innerHTML = '<span style="color:#10b981;">' + methodLabel + '</span>';
+          } else {
+            authStatus.innerHTML = '<span style="color:#ef4444;">❌ 未连接 — 请在下方选择一种连接方式</span>';
+          }
+        }
+      } catch (e) {
+        console.error('加载存储设置失败:', e);
+      }
+    }
+
+    window.switchStorage = async function(target, mode) {
+      var statusEl = document.getElementById('storageSwitchStatus');
+      var label = target === 'all' ? '所有数据' : (target === 'conversations' ? '对话记录' : '知识库');
+      var modeLabel = mode === 'google_drive' ? 'Google Drive' : '本地';
+
+      if (mode === 'google_drive' && !confirm(`切换 ${label} 到 Google Drive 存储？\n切换后需要重启服务器生效。`)) return;
+      if (mode === 'local' && !confirm(`切换 ${label} 到本地存储？\n切换后需要重启服务器生效。`)) return;
+
+      showStatus(statusEl, '正在切换...', 'loading');
+      try {
+        var res = await apiFetch('/storage/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target, mode })
+        });
+        var data = await res.json();
+        if (data.success) {
+          showStatus(statusEl, data.message + '（重启服务器后生效）', 'success');
+          loadStorageMode();
+        } else {
+          showStatus(statusEl, data.error || '切换失败', 'error');
+        }
+      } catch (e) {
+        showStatus(statusEl, '网络错误', 'error');
+      }
+    };
+
+    // Service Account JSON 上传
+    document.getElementById('saFileInput').addEventListener('change', async function(e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      var statusEl = document.getElementById('saUploadStatus');
+      statusEl.textContent = '上传中...';
+      statusEl.style.color = '#64748b';
+
+      try {
+        var text = await new Promise((resolve, reject) => {
+          var reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('read failed'));
+          reader.readAsText(file);
+        });
+        var json = JSON.parse(text);
+        if (!json.type || json.type !== 'service_account') {
+          statusEl.textContent = '❌ 文件不是 Service Account JSON';
+          statusEl.style.color = '#ef4444';
+          return;
+        }
+
+        var res = await apiFetch('/google/upload-sa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credentials: json })
+        });
+        var data = await res.json();
+        if (data.success) {
+          statusEl.textContent = '✅ 上传成功 (' + json.client_email + ')';
+          statusEl.style.color = '#10b981';
+          loadStorageMode();
+        } else {
+          statusEl.textContent = '❌ ' + (data.error || '上传失败');
+          statusEl.style.color = '#ef4444';
+        }
+      } catch (err) {
+        statusEl.textContent = '❌ JSON 解析失败';
+        statusEl.style.color = '#ef4444';
+      }
+      e.target.value = '';
+    });
+
+    // Google Drive 桌面客户端路径应用
+    window.applyLocalDrivePath = async function() {
+      var pathVal = document.getElementById('localDrivePath').value.trim();
+      if (!pathVal) { alert('请输入 Google Drive 本地路径'); return; }
+      showStatus(document.getElementById('storageSwitchStatus'), '正在应用...', 'loading');
+      try {
+        var res = await apiFetch('/storage/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: 'all', mode: 'google_drive', googlePath: pathVal })
+        });
+        var data = await res.json();
+        if (data.success) {
+          showStatus(document.getElementById('storageSwitchStatus'), data.message + '（重启服务器后生效）', 'success');
+          loadStorageMode();
+        } else {
+          showStatus(document.getElementById('storageSwitchStatus'), data.error || '设置失败', 'error');
+        }
+      } catch (e) {
+        showStatus(document.getElementById('storageSwitchStatus'), '网络错误', 'error');
+      }
+    };
+
+    // OAuth 授权（备用）
+    window.googleAuth = async function() {
+      try {
+        var res = await apiFetch('/google/auth-url');
+        var data = await res.json();
+        if (data.success && data.url) {
+          window.open(data.url, '_blank');
+        } else {
+          alert('获取授权链接失败: ' + (data.error || '请检查 credentials.json'));
+        }
+      } catch (e) {
+        alert('获取授权链接失败');
+      }
+    };
+
+    loadStorageMode();
+
+        loadStats();
+    loadPlatforms();
+  </script>
+</body>
+</html>
